@@ -1,54 +1,54 @@
-import os
-import json
-import base64
-import pickle
 import numpy as np
-from io import BytesIO
+import os
+import pickle
 from flask import Flask, request, jsonify
-import face_recognition
 from sklearn.neighbors import KNeighborsClassifier
+import face_recognition
 from PIL import Image
+from io import BytesIO
+import base64
+import requests
 
 app = Flask(__name__)
 
 # Constants
-DATASET_PATH = "../Dataset"
-MODEL_PATH = "knn_model.pkl"
-N_NEIGHBORS = 3  # Hardcoded KNN neighbors
+DATASET_FILE = "./dataset.npz"  # Path to the .npz file
+MODEL_PATH = "knn_model.pkl"  # Path to save/load the KNN model
+N_NEIGHBORS = 3  # Number of neighbors for KNN
+GITHUB_DATASET_URL = "https://raw.githubusercontent.com/your-username/your-repo/main/dataset.npz"  # Update this URL
 
 
-# Function to load dataset and generate embeddings
-def load_dataset(dataset_path):
-    embeddings = []
-    labels = []
+# Function to load dataset from .npz file
+def load_dataset_from_npz(file_path):
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Dataset file not found at {file_path}")
 
-    for person_name in os.listdir(dataset_path):
-        person_path = os.path.join(dataset_path, person_name)
-        if os.path.isdir(person_path) and not person_name.startswith('.'):
-            for image_name in os.listdir(person_path):
-                image_path = os.path.join(person_path, image_name)
-                if not image_name.startswith('.') and image_path.lower().endswith(('.png', '.jpg', '.jpeg')):
-                    try:
-                        image = face_recognition.load_image_file(image_path)
-                        encodings = face_recognition.face_encodings(image)
-                        if encodings:
-                            embeddings.append(encodings[0])
-                            labels.append(person_name)
-                    except Exception as e:
-                        print(f"Error processing {image_path}: {e}")
+    # Load the compressed .npz file
+    data = np.load(file_path)
+    embeddings = data['embeddings']
+    labels = data['labels']
 
-    return np.array(embeddings), np.array(labels)
+    print(f"Loaded dataset: {len(embeddings)} embeddings, {len(labels)} labels")
+    return embeddings, labels
+
+
+# Function to download and load dataset dynamically if not present
+def download_and_load_dataset(url, file_path):
+    if not os.path.exists(file_path):
+        print("Downloading dataset...")
+        response = requests.get(url)
+        with open(file_path, "wb") as file:
+            file.write(response.content)
+
+    return load_dataset_from_npz(file_path)
 
 
 # Function to train and save the KNN model
-def train_knn_model(dataset_path, model_path, n_neighbors):
-    embeddings, labels = load_dataset(dataset_path)
-    if len(embeddings) == 0 or len(labels) == 0:
-        raise ValueError("No data found in the dataset!")
-
+def train_knn_model(embeddings, labels, model_path, n_neighbors):
     knn = KNeighborsClassifier(n_neighbors=n_neighbors, weights="distance")
     knn.fit(embeddings, labels)
 
+    # Save the model
     with open(model_path, "wb") as file:
         pickle.dump(knn, file)
 
@@ -58,14 +58,18 @@ def train_knn_model(dataset_path, model_path, n_neighbors):
 # API Endpoint for real-time video recognition
 @app.route('/recognize', methods=['POST'])
 def recognize():
-    # Check if the model exists, if not, train it
-    if not os.path.exists(MODEL_PATH):
-        try:
-            train_knn_model(DATASET_PATH, MODEL_PATH, N_NEIGHBORS)
-        except Exception as e:
-            return jsonify({"error": f"Failed to train KNN model: {str(e)}"}), 500
+    # Ensure the dataset and model exist
+    try:
+        embeddings, labels = download_and_load_dataset(GITHUB_DATASET_URL, DATASET_FILE)
+    except Exception as e:
+        return jsonify({"error": f"Failed to load dataset: {str(e)}"}), 500
 
-    # Load the trained model
+    # Check if the model exists, and train it if not
+    if not os.path.exists(MODEL_PATH):
+        print("Training KNN model...")
+        train_knn_model(embeddings, labels, MODEL_PATH, N_NEIGHBORS)
+
+    # Load the trained KNN model
     with open(MODEL_PATH, "rb") as file:
         knn = pickle.load(file)
 
