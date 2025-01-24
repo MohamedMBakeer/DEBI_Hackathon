@@ -1,63 +1,127 @@
-import streamlit as st
 import cv2
-import pickle
+import os
 import numpy as np
-from PIL import Image
-import face_recognition
+import mediapipe as mp
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
+import pickle
 
-# Load the KNN model
-def load_knn_model(model_path):
-    with open(model_path, "rb") as file:
-        return pickle.load(file)
+# Mediapipe setup
+mp_face_detection = mp.solutions.face_detection
+mp_drawing = mp.solutions.drawing_utils
 
-# Process image and get face embeddings
-def process_image(image, knn_model, confidence_threshold=0.98):
-    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    face_locations = face_recognition.face_locations(rgb_image)
-    face_encodings = face_recognition.face_encodings(rgb_image, face_locations)
+# Function to load dataset and extract embeddings
+def load_dataset_with_mediapipe(dataset_path, resize_to=(224, 224)):
+    embeddings = []
+    labels = []
 
-    results = []
-    for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
-        name = "Unknown"
-        probabilities = knn_model.predict_proba([face_encoding])
-        max_confidence = np.max(probabilities)
+    face_detection = mp_face_detection.FaceDetection(min_detection_confidence=0.5)
 
-        if max_confidence >= confidence_threshold:
-            predicted_class = np.argmax(probabilities)
-            name = knn_model.classes_[predicted_class]
+    for person_name in os.listdir(dataset_path):
+        person_path = os.path.join(dataset_path, person_name)
+        if os.path.isdir(person_path) and not person_name.startswith('.'):
+            print(f"Processing folder: {person_name}")
+            for image_name in os.listdir(person_path):
+                image_path = os.path.join(person_path, image_name)
+                if not image_name.startswith('.') and image_path.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    try:
+                        print(f"Processing image: {image_path}")
+                        image = cv2.imread(image_path)
+                        if image is None:
+                            print(f"Could not load image: {image_path}")
+                            continue
 
-        results.append({"name": name, "confidence": max_confidence, "box": (top, right, bottom, left)})
-    
-    return results
+                        # Convert to RGB
+                        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-# Streamlit UI
-def main():
-    st.title("Real-Time Face Recognition")
-    st.sidebar.title("Settings")
+                        # Detect faces
+                        results = face_detection.process(rgb_image)
+                        if results.detections:
+                            for detection in results.detections:
+                                bboxC = detection.location_data.relative_bounding_box
+                                h, w, _ = image.shape
+                                x, y, w_box, h_box = (int(bboxC.xmin * w), int(bboxC.ymin * h),
+                                                      int(bboxC.width * w), int(bboxC.height * h))
 
-    model_path = st.sidebar.text_input("KNN Model Path", "knn_model.pkl")
-    confidence_threshold = st.sidebar.slider("Confidence Threshold", 0.5, 1.0, 0.98)
-    uploaded_image = st.file_uploader("Upload an Image", type=["jpg", "jpeg", "png"])
+                                # Crop and resize the face
+                                face = rgb_image[y:y + h_box, x:x + w_box]
+                                face_resized = cv2.resize(face, resize_to)
 
-    knn_model = load_knn_model(model_path)
+                                # Flatten the resized face as embedding
+                                embeddings.append(face_resized.flatten())
+                                labels.append(person_name)
+                        else:
+                            print(f"No face detected in {image_path}")
+                    except Exception as e:
+                        print(f"Error processing file {image_path}: {e}")
 
-    if uploaded_image is not None:
-        image = np.array(Image.open(uploaded_image))
-        st.image(image, caption="Uploaded Image", use_column_width=True)
+    print(f"Total embeddings: {len(embeddings)}, Total labels: {len(labels)}")
+    return np.array(embeddings), np.array(labels)
 
-        results = process_image(image, knn_model, confidence_threshold)
+# Train and save the KNN model
+def train_and_save_knn(embeddings, labels, model_path="knn_model.pkl", n_neighbors=3):
+    X_train, X_test, y_train, y_test = train_test_split(embeddings, labels, test_size=0.2, random_state=42)
 
-        for result in results:
-            top, right, bottom, left = result["box"]
-            name = result["name"]
-            confidence = int(result["confidence"] * 100)
+    knn = KNeighborsClassifier(n_neighbors=n_neighbors, weights="uniform")
+    knn.fit(X_train, y_train)
 
-            # Draw bounding boxes and labels
-            cv2.rectangle(image, (left, top), (right, bottom), (0, 255, 0), 2)
-            cv2.putText(image, f"{name} ({confidence}%)", (left, top - 10), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+    with open(model_path, "wb") as file:
+        pickle.dump(knn, file)
+    print(f"KNN model saved to {model_path}")
 
-        st.image(image, caption="Processed Image", use_column_width=True)
+    accuracy = knn.score(X_test, y_test)
+    print(f"Model accuracy: {accuracy * 100:.2f}%")
 
-if __name__ == "__main__":
-    main()
+# Real-time recognition
+def real_time_recognition(knn_model_path, confidence_threshold=0.5):
+    video_capture = cv2.VideoCapture(0)
+
+    with open(knn_model_path, "rb") as file:
+        knn = pickle.load(file)
+
+    face_detection = mp_face_detection.FaceDetection(min_detection_confidence=0.5)
+
+    while True:
+        ret, frame = video_capture.read()
+        if not ret:
+            break
+
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = face_detection.process(rgb_frame)
+
+        if results.detections:
+            for detection in results.detections:
+                bboxC = detection.location_data.relative_bounding_box
+                h, w, _ = frame.shape
+                x, y, w_box, h_box = (int(bboxC.xmin * w), int(bboxC.ymin * h),
+                                      int(bboxC.width * w), int(bboxC.height * h))
+
+                face = rgb_frame[y:y + h_box, x:x + w_box]
+                face_resized = cv2.resize(face, (224, 224)).flatten()
+
+                probabilities = knn.predict_proba([face_resized])
+                max_confidence = np.max(probabilities)
+
+                name = "Unknown"
+                if max_confidence >= confidence_threshold:
+                    predicted_class = np.argmax(probabilities)
+                    name = knn.classes_[predicted_class]
+
+                # Draw bounding box and label
+                cv2.rectangle(frame, (x, y), (x + w_box, y + h_box), (0, 255, 0), 2)
+                cv2.putText(frame, f"{name} ({max_confidence * 100:.1f}%)", (x, y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+
+        cv2.imshow("Real-Time Face Recognition", frame)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    video_capture.release()
+    cv2.destroyAllWindows()
+
+# Main workflow
+dataset_path = "../Dataset"
+embeddings, labels = load_dataset_with_mediapipe(dataset_path)
+train_and_save_knn(embeddings, labels)
+real_time_recognition("knn_model.pkl", confidence_threshold=0.5)
