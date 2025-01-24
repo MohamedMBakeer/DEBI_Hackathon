@@ -1,6 +1,6 @@
 Flask
 cmake
-dlib==19.22.99
+dlib==19.24.0
 face-recognition
 scikit-learn
 numpy
