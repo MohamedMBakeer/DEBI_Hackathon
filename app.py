@@ -28,13 +28,19 @@ def load_model(model_path):
 
 # Function to perform real-time face detection and recognition
 def real_time_recognition(knn, confidence_threshold=0.5):
-    video_capture = cv2.VideoCapture(1)
+    video_capture = cv2.VideoCapture(0)
+    if not video_capture.isOpened():
+        st.error("Unable to access the webcam. Please check your device or permissions.")
+        return
+
     frame_placeholder = st.empty()
 
     with mp_face_detection.FaceDetection(min_detection_confidence=0.5) as face_detection:
+        st.write("Webcam started. Press 'Q' in the window to stop.")
         while True:
             ret, frame = video_capture.read()
             if not ret:
+                st.error("Failed to grab frame from the webcam.")
                 break
 
             # Detect faces
@@ -70,10 +76,12 @@ def real_time_recognition(knn, confidence_threshold=0.5):
             # Display video in Streamlit
             frame_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB")
 
+            # Stop webcam on 'Q' key press
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
 
     video_capture.release()
+    cv2.destroyAllWindows()
 
 # Streamlit UI
 st.title("Real-Time Face Recognition with Pre-Trained KNN Model")
@@ -85,7 +93,7 @@ knn_model = load_model(MODEL_PATH)
 # Real-time recognition
 if knn_model:
     if st.button("Start Webcam"):
-        st.write("Starting webcam for real-time recognition. Press 'Q' to stop.")
+        st.write("Initializing webcam for real-time recognition. Press 'Q' to stop.")
         real_time_recognition(knn_model)
 else:
     st.warning("Please ensure the model file is available.")
