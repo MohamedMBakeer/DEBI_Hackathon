@@ -1,6 +1,6 @@
 streamlit
 numpy
-scikit-learn
 face-recognition
 pillow
 opencv-python
+scikit-learn
