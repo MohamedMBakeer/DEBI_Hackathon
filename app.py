@@ -1,127 +1,80 @@
+import streamlit as st
 import cv2
-import os
 import numpy as np
-import mediapipe as mp
-from sklearn.model_selection import train_test_split
-from sklearn.neighbors import KNeighborsClassifier
 import pickle
+import face_recognition
+from PIL import Image
 
-# Mediapipe setup
-mp_face_detection = mp.solutions.face_detection
-mp_drawing = mp.solutions.drawing_utils
+# Load the pre-trained KNN model
+def load_knn_model(model_path):
+    with open(model_path, "rb") as file:
+        return pickle.load(file)
 
-# Function to load dataset and extract embeddings
-def load_dataset_with_mediapipe(dataset_path, resize_to=(224, 224)):
-    embeddings = []
-    labels = []
+# Function to process the frame and perform face recognition
+def process_frame(frame, knn_model, confidence_threshold):
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    face_locations, face_encodings = get_face_embeddings(rgb_frame)
+    annotated_frame = frame.copy()
+    
+    for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
+        name = "Unknown"
+        probabilities = knn_model.predict_proba([face_encoding])
+        max_confidence = np.max(probabilities)
 
-    face_detection = mp_face_detection.FaceDetection(min_detection_confidence=0.5)
+        if max_confidence >= confidence_threshold:
+            predicted_class = np.argmax(probabilities)
+            name = knn_model.classes_[predicted_class]
+        
+        confidence_percentage = int(max_confidence * 100)
+        
+        # Annotate the frame with the name and confidence
+        cv2.rectangle(annotated_frame, (left, top), (right, bottom), (0, 255, 0), 2)
+        cv2.putText(annotated_frame, f"{name} ({confidence_percentage}%)", 
+                    (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+    
+    return annotated_frame
 
-    for person_name in os.listdir(dataset_path):
-        person_path = os.path.join(dataset_path, person_name)
-        if os.path.isdir(person_path) and not person_name.startswith('.'):
-            print(f"Processing folder: {person_name}")
-            for image_name in os.listdir(person_path):
-                image_path = os.path.join(person_path, image_name)
-                if not image_name.startswith('.') and image_path.lower().endswith(('.png', '.jpg', '.jpeg')):
-                    try:
-                        print(f"Processing image: {image_path}")
-                        image = cv2.imread(image_path)
-                        if image is None:
-                            print(f"Could not load image: {image_path}")
-                            continue
+# Function to get face embeddings
+def get_face_embeddings(image):
+    face_locations = face_recognition.face_locations(image)
+    face_encodings = face_recognition.face_encodings(image, face_locations)
+    return face_locations, face_encodings
 
-                        # Convert to RGB
-                        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+# Streamlit App
+st.title("Real-Time Face Recognition with Streamlit")
+st.sidebar.title("Settings")
 
-                        # Detect faces
-                        results = face_detection.process(rgb_image)
-                        if results.detections:
-                            for detection in results.detections:
-                                bboxC = detection.location_data.relative_bounding_box
-                                h, w, _ = image.shape
-                                x, y, w_box, h_box = (int(bboxC.xmin * w), int(bboxC.ymin * h),
-                                                      int(bboxC.width * w), int(bboxC.height * h))
+confidence_threshold = st.sidebar.slider("Confidence Threshold", 0.5, 1.0, 0.98, 0.01)
+model_path = st.sidebar.text_input("Model Path", "knn_model.pkl")
+run_button = st.sidebar.button("Start Recognition")
 
-                                # Crop and resize the face
-                                face = rgb_image[y:y + h_box, x:x + w_box]
-                                face_resized = cv2.resize(face, resize_to)
+if model_path and run_button:
+    st.text("Loading the KNN model...")
+    knn_model = load_knn_model(model_path)
+    st.text("Model loaded successfully!")
 
-                                # Flatten the resized face as embedding
-                                embeddings.append(face_resized.flatten())
-                                labels.append(person_name)
-                        else:
-                            print(f"No face detected in {image_path}")
-                    except Exception as e:
-                        print(f"Error processing file {image_path}: {e}")
-
-    print(f"Total embeddings: {len(embeddings)}, Total labels: {len(labels)}")
-    return np.array(embeddings), np.array(labels)
-
-# Train and save the KNN model
-def train_and_save_knn(embeddings, labels, model_path="knn_model.pkl", n_neighbors=3):
-    X_train, X_test, y_train, y_test = train_test_split(embeddings, labels, test_size=0.2, random_state=42)
-
-    knn = KNeighborsClassifier(n_neighbors=n_neighbors, weights="uniform")
-    knn.fit(X_train, y_train)
-
-    with open(model_path, "wb") as file:
-        pickle.dump(knn, file)
-    print(f"KNN model saved to {model_path}")
-
-    accuracy = knn.score(X_test, y_test)
-    print(f"Model accuracy: {accuracy * 100:.2f}%")
-
-# Real-time recognition
-def real_time_recognition(knn_model_path, confidence_threshold=0.5):
+    # Start video feed
+    st.text("Starting the webcam...")
     video_capture = cv2.VideoCapture(0)
+    frame_window = st.image([])
 
-    with open(knn_model_path, "rb") as file:
-        knn = pickle.load(file)
+    try:
+        while True:
+            ret, frame = video_capture.read()
+            if not ret:
+                st.warning("Failed to capture video. Check your camera.")
+                break
 
-    face_detection = mp_face_detection.FaceDetection(min_detection_confidence=0.5)
+            # Process the frame and get annotated frame
+            annotated_frame = process_frame(frame, knn_model, confidence_threshold)
+            
+            # Convert to RGB for Streamlit display
+            annotated_frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+            frame_window.image(annotated_frame_rgb, channels="RGB")
 
-    while True:
-        ret, frame = video_capture.read()
-        if not ret:
-            break
+            if st.sidebar.button("Stop Recognition"):
+                break
 
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = face_detection.process(rgb_frame)
-
-        if results.detections:
-            for detection in results.detections:
-                bboxC = detection.location_data.relative_bounding_box
-                h, w, _ = frame.shape
-                x, y, w_box, h_box = (int(bboxC.xmin * w), int(bboxC.ymin * h),
-                                      int(bboxC.width * w), int(bboxC.height * h))
-
-                face = rgb_frame[y:y + h_box, x:x + w_box]
-                face_resized = cv2.resize(face, (224, 224)).flatten()
-
-                probabilities = knn.predict_proba([face_resized])
-                max_confidence = np.max(probabilities)
-
-                name = "Unknown"
-                if max_confidence >= confidence_threshold:
-                    predicted_class = np.argmax(probabilities)
-                    name = knn.classes_[predicted_class]
-
-                # Draw bounding box and label
-                cv2.rectangle(frame, (x, y), (x + w_box, y + h_box), (0, 255, 0), 2)
-                cv2.putText(frame, f"{name} ({max_confidence * 100:.1f}%)", (x, y - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-
-        cv2.imshow("Real-Time Face Recognition", frame)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    video_capture.release()
-    cv2.destroyAllWindows()
-
-# Main workflow
-dataset_path = "../Dataset"
-embeddings, labels = load_dataset_with_mediapipe(dataset_path)
-train_and_save_knn(embeddings, labels)
-real_time_recognition("knn_model.pkl", confidence_threshold=0.5)
+    finally:
+        video_capture.release()
+        st.text("Webcam released. Recognition stopped.")
