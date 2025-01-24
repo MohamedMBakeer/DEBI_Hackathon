@@ -1,6 +1,6 @@
-flask
+streamlit
 numpy
 scikit-learn
 face-recognition
 pillow
-requests
+opencv-python
