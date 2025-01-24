@@ -28,7 +28,7 @@ def load_model(model_path):
 
 # Function to perform real-time face detection and recognition
 def real_time_recognition(knn, confidence_threshold=0.5):
-    video_capture = cv2.VideoCapture(0)
+    video_capture = cv2.VideoCapture(1)
     frame_placeholder = st.empty()
 
     with mp_face_detection.FaceDetection(min_detection_confidence=0.5) as face_detection:
