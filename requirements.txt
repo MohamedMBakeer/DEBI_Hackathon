@@ -3,3 +3,4 @@ face-recognition
 scikit-learn
 numpy
 pillow
+cmake
