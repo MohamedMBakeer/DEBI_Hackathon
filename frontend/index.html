@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Video Recognition</title>
+</head>
+<body>
+    <video id="video" autoplay></video>
+    <canvas id="canvas" style="display: none;"></canvas>
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Access the webcam
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then((stream) => {
+                video.srcObject = stream;
+            })
+            .catch((err) => console.error("Error accessing webcam: ", err));
+
+        // Capture and send frames for recognition
+        async function captureFrame() {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const base64Image = canvas.toDataURL('image/jpeg').split(',')[1];
+
+            try {
+                const response = await fetch('/api/recognize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: base64Image }),
+                });
+
+                const result = await response.json();
+                console.log(result);
+
+                // Optional: Draw bounding boxes on the video
+                if (result.faces) {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                    result.faces.forEach(face => {
+                        const [top, right, bottom, left] = face.bbox;
+                        ctx.strokeStyle = 'green';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(left, top, right - left, bottom - top);
+
+                        ctx.font = '16px Arial';
+                        ctx.fillStyle = 'green';
+                        ctx.fillText(face.name, left, top - 10);
+                    });
+                }
+            } catch (error) {
+                console.error("Error recognizing face:", error);
+            }
+        }
+
+        // Continuously capture frames
+        setInterval(captureFrame, 500); // Capture a frame every 500ms
+    </script>
+</body>
+</html>
