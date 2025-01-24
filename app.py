@@ -1,25 +1,28 @@
 import os
-import face_recognition
-import numpy as np
 import cv2
-import pickle
+import numpy as np
 import streamlit as st
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
+import mediapipe as mp
 from PIL import Image
 
 # Constants
-DATASET_FILE = "./dataset.npz"  # Path to dataset file in the repo
+DATASET_FILE = "./dataset.npz"  # Path to the dataset file in the repository
 RESIZE_TO = (224, 224)  # Resize dimension for training images
 
-# Function to load dataset from an .npz file
+# Mediapipe setup
+mp_face_detection = mp.solutions.face_detection
+mp_drawing = mp.solutions.drawing_utils
+
+# Function to load dataset
 def load_dataset(file_path, resize_to=(224, 224)):
     embeddings = []
     labels = []
 
     data = np.load(file_path)
-    image_paths = data['image_paths']
-    labels_list = data['labels']
+    image_paths = data["image_paths"]
+    labels_list = data["labels"]
 
     for image_path, label in zip(image_paths, labels_list):
         try:
@@ -28,12 +31,8 @@ def load_dataset(file_path, resize_to=(224, 224)):
                 continue
 
             resized_image = cv2.resize(image, resize_to)
-            rgb_image = cv2.cvtColor(resized_image, cv2.COLOR_BGR2RGB)
-            encodings = face_recognition.face_encodings(rgb_image)
-
-            if encodings:
-                embeddings.append(encodings[0])
-                labels.append(label)
+            embeddings.append(resized_image.flatten())
+            labels.append(label)
         except Exception as e:
             print(f"Error processing {image_path}: {e}")
 
@@ -49,53 +48,47 @@ def train_knn(embeddings, labels, n_neighbors=3):
     accuracy = knn.score(X_test, y_test)
     return knn, accuracy
 
-# Function to perform real-time face recognition
+# Function to perform real-time face detection and recognition
 def real_time_recognition(knn, confidence_threshold=0.5):
     video_capture = cv2.VideoCapture(0)
     frame_placeholder = st.empty()
 
-    while True:
-        ret, frame = video_capture.read()
-        if not ret:
-            break
+    with mp_face_detection.FaceDetection(min_detection_confidence=0.5) as face_detection:
+        while True:
+            ret, frame = video_capture.read()
+            if not ret:
+                break
 
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        face_locations, face_encodings = get_face_embeddings(rgb_frame)
+            # Detect faces
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = face_detection.process(rgb_frame)
 
-        for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
-            name = "Unknown"
-            probabilities = knn.predict_proba([face_encoding])
-            max_confidence = np.max(probabilities)
+            if results.detections:
+                for detection in results.detections:
+                    bboxC = detection.location_data.relative_bounding_box
+                    ih, iw, _ = frame.shape
+                    x, y, w, h = (
+                        int(bboxC.xmin * iw),
+                        int(bboxC.ymin * ih),
+                        int(bboxC.width * iw),
+                        int(bboxC.height * ih),
+                    )
+                    # Draw bounding box
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-            if max_confidence >= confidence_threshold:
-                predicted_class = np.argmax(probabilities)
-                name = knn.classes_[predicted_class]
+            # Display video in Streamlit
+            frame_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB")
 
-            confidence_percentage = int(max_confidence * 100)
-
-            cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
-            cv2.putText(frame, f"{name} ({confidence_percentage}%)", (left, top - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-
-        # Display video in Streamlit
-        frame_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB")
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
 
     video_capture.release()
 
-# Function to extract face embeddings
-def get_face_embeddings(image):
-    face_locations = face_recognition.face_locations(image)
-    face_encodings = face_recognition.face_encodings(image, face_locations)
-    return face_locations, face_encodings
-
 # Streamlit UI
-st.title("Real-Time Face Recognition with KNN")
-st.write("This app loads a dataset, trains a KNN model, and performs real-time face recognition.")
+st.title("Real-Time Face Recognition with KNN and Mediapipe")
+st.write("This app loads a dataset, trains a KNN model, and performs real-time face detection and recognition.")
 
-# Load dataset from .npz
+# Load dataset
 if os.path.exists(DATASET_FILE):
     embeddings, labels = load_dataset(DATASET_FILE, resize_to=RESIZE_TO)
     st.write(f"Loaded {len(embeddings)} embeddings from the dataset.")
