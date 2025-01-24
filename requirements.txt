@@ -2,5 +2,6 @@ mediapipe
 streamlit 
 Pillow
 opencv-python
+opencv-python-headless
 scikit-learn
 numpy
