@@ -1,32 +1,129 @@
-import streamlit as st
-import cv2
+import os
+import face_recognition
 import numpy as np
+import cv2
+import pickle
+import streamlit as st
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
 from PIL import Image
-import mediapipe as mp
 
-# Mediapipe setup
-mp_face_detection = mp.solutions.face_detection
-mp_drawing = mp.solutions.drawing_utils
+# Constants
+DATASET_FILE = "./dataset.npz"  # Path to dataset file
+RESIZE_TO = (224, 224)  # Resize dimension for training images
+MODEL_PATH = "./knn_model.pkl"  # Model path for saving/loading
+
+# Function to load dataset from an .npz file
+@st.cache_resource
+def load_dataset(file_path, resize_to=(224, 224)):
+    embeddings = []
+    labels = []
+
+    data = np.load(file_path)
+    image_paths = data['image_paths']
+    labels_list = data['labels']
+
+    for image_path, label in zip(image_paths, labels_list):
+        try:
+            image = cv2.imread(image_path)
+            if image is None:
+                continue
+
+            resized_image = cv2.resize(image, resize_to)
+            rgb_image = cv2.cvtColor(resized_image, cv2.COLOR_BGR2RGB)
+            encodings = face_recognition.face_encodings(rgb_image)
+
+            if encodings:
+                embeddings.append(encodings[0])
+                labels.append(label)
+        except Exception as e:
+            print(f"Error processing {image_path}: {e}")
+
+    return np.array(embeddings), np.array(labels)
+
+# Function to train and save the KNN model
+@st.cache_resource
+def train_and_save_knn(embeddings, labels, n_neighbors=3):
+    X_train, X_test, y_train, y_test = train_test_split(embeddings, labels, test_size=0.2, random_state=42)
+
+    knn = KNeighborsClassifier(n_neighbors=n_neighbors, weights="uniform")
+    knn.fit(X_train, y_train)
+
+    with open(MODEL_PATH, "wb") as file:
+        pickle.dump(knn, file)
+
+    accuracy = knn.score(X_test, y_test)
+    return knn, accuracy
+
+# Function to perform real-time face recognition
+def real_time_recognition(knn, confidence_threshold=0.5):
+    video_capture = cv2.VideoCapture(0)
+    frame_placeholder = st.empty()
+
+    while True:
+        ret, frame = video_capture.read()
+        if not ret:
+            break
+
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        face_locations, face_encodings = get_face_embeddings(rgb_frame)
+
+        for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
+            name = "Unknown"
+            probabilities = knn.predict_proba([face_encoding])
+            max_confidence = np.max(probabilities)
+
+            if max_confidence >= confidence_threshold:
+                predicted_class = np.argmax(probabilities)
+                name = knn.classes_[predicted_class]
+
+            confidence_percentage = int(max_confidence * 100)
+
+            cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+            cv2.putText(frame, f"{name} ({confidence_percentage}%)", (left, top - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+
+        # Display video in Streamlit
+        frame_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB")
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    video_capture.release()
+
+# Function to extract face embeddings
+def get_face_embeddings(image):
+    face_locations = face_recognition.face_locations(image)
+    face_encodings = face_recognition.face_encodings(image, face_locations)
+    return face_locations, face_encodings
 
 # Streamlit UI
-st.title("Real-Time Face Detection with Mediapipe")
+st.title("Real-Time Face Recognition with KNN")
+st.write("Upload your dataset, train a KNN model, and perform real-time face recognition.")
 
-# Upload image
-uploaded_image = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+# Sidebar for dataset upload and model training
+with st.sidebar:
+    dataset_uploaded = st.file_uploader("Upload Dataset (.npz)", type=["npz"])
 
-if uploaded_image:
-    # Convert uploaded image to numpy array
-    image = Image.open(uploaded_image)
-    image_np = np.array(image)
+    if dataset_uploaded:
+        with open(DATASET_FILE, "wb") as f:
+            f.write(dataset_uploaded.read())
 
-    # Mediapipe face detection
-    with mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5) as face_detection:
-        results = face_detection.process(cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB))
+        embeddings, labels = load_dataset(DATASET_FILE, resize_to=RESIZE_TO)
 
-        if results.detections:
-            for detection in results.detections:
-                # Draw bounding box and landmarks
-                mp_drawing.draw_detection(image_np, detection)
+        st.write(f"Loaded {len(embeddings)} embeddings from the dataset.")
 
-    # Display the image with bounding boxes
-    st.image(image_np, caption="Detected Faces", use_column_width=True)
+        train_model = st.button("Train Model")
+        if train_model:
+            knn, accuracy = train_and_save_knn(embeddings, labels)
+            st.success(f"Model trained with {accuracy * 100:.2f}% accuracy.")
+    else:
+        st.warning("Please upload a dataset to proceed.")
+
+# Main section for real-time recognition
+if os.path.exists(MODEL_PATH):
+    knn_model = pickle.load(open(MODEL_PATH, "rb"))
+    st.write("Real-Time Recognition")
+    st.button("Start Webcam", on_click=real_time_recognition, args=(knn_model,))
+else:
+    st.warning("Please train the model first.")
