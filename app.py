@@ -36,14 +36,14 @@ def real_time_recognition(knn, confidence_threshold=0.5):
     frame_placeholder = st.empty()
 
     with mp_face_detection.FaceDetection(min_detection_confidence=0.5) as face_detection:
-        st.write("Webcam started. Press 'Q' in the window to stop.")
+        st.write("Webcam started. Press 'Q' to stop.")
         while True:
             ret, frame = video_capture.read()
             if not ret:
                 st.error("Failed to grab frame from the webcam.")
                 break
 
-            # Detect faces
+            # Process the frame
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = face_detection.process(rgb_frame)
 
@@ -73,15 +73,14 @@ def real_time_recognition(knn, confidence_threshold=0.5):
                     # Display recognition results
                     cv2.putText(frame, name, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
-            # Display video in Streamlit
-            frame_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB")
+            # Display the frame in Streamlit
+            frame_placeholder.image(rgb_frame, channels="RGB")
 
-            # Stop webcam on 'Q' key press
+            # Exit condition (optional)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
 
     video_capture.release()
-    cv2.destroyAllWindows()
 
 # Streamlit UI
 st.title("Real-Time Face Recognition with Pre-Trained KNN Model")
