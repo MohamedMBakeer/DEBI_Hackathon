@@ -26,11 +26,18 @@ def load_model(model_path):
         st.error(f"Model file not found: {model_path}")
         return None
 
+# Function to check and initialize the webcam
+def initialize_webcam():
+    video_capture = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # CAP_DSHOW for Windows systems
+    if not video_capture.isOpened():
+        st.error("Webcam initialization failed. Please check your device or try restarting it.")
+        return None
+    return video_capture
+
 # Function to perform real-time face detection and recognition
 def real_time_recognition(knn, confidence_threshold=0.5):
-    video_capture = cv2.VideoCapture(0)
-    if not video_capture.isOpened():
-        st.error("Unable to access the webcam. Please check your device or permissions.")
+    video_capture = initialize_webcam()
+    if not video_capture:
         return
 
     frame_placeholder = st.empty()
@@ -76,7 +83,7 @@ def real_time_recognition(knn, confidence_threshold=0.5):
             # Display the frame in Streamlit
             frame_placeholder.image(rgb_frame, channels="RGB")
 
-            # Exit condition (optional)
+            # Stop condition (for Streamlit session)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
 
@@ -92,7 +99,7 @@ knn_model = load_model(MODEL_PATH)
 # Real-time recognition
 if knn_model:
     if st.button("Start Webcam"):
-        st.write("Initializing webcam for real-time recognition. Press 'Q' to stop.")
+        st.write("Initializing webcam for real-time recognition.")
         real_time_recognition(knn_model)
 else:
     st.warning("Please ensure the model file is available.")
