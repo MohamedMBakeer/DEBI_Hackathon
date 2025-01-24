@@ -1,6 +1,5 @@
 streamlit
-numpy
-face-recognition
 opencv-python-headless
+numpy
 scikit-learn
-pillow
+mediapipe
