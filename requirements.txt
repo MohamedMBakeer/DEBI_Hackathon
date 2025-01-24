@@ -1,7 +1,6 @@
-Flask
-face-recognition
-scikit-learn
+flask
 numpy
+scikit-learn
+face-recognition
 pillow
-mediapipe
-opencv-python
+requests
