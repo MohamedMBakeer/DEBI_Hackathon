@@ -1,7 +1,6 @@
 streamlit
-streamlit-webrtc
-face-recognition
 numpy
-scikit-learn
+face-recognition
 opencv-python-headless
+scikit-learn
 pillow
