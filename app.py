@@ -9,12 +9,10 @@ from sklearn.neighbors import KNeighborsClassifier
 from PIL import Image
 
 # Constants
-DATASET_FILE = "./dataset.npz"  # Path to dataset file
+DATASET_FILE = "./dataset.npz"  # Path to dataset file in the repo
 RESIZE_TO = (224, 224)  # Resize dimension for training images
-MODEL_PATH = "./knn_model.pkl"  # Model path for saving/loading
 
 # Function to load dataset from an .npz file
-@st.cache_resource
 def load_dataset(file_path, resize_to=(224, 224)):
     embeddings = []
     labels = []
@@ -41,16 +39,12 @@ def load_dataset(file_path, resize_to=(224, 224)):
 
     return np.array(embeddings), np.array(labels)
 
-# Function to train and save the KNN model
-@st.cache_resource
-def train_and_save_knn(embeddings, labels, n_neighbors=3):
+# Function to train a KNN model
+def train_knn(embeddings, labels, n_neighbors=3):
     X_train, X_test, y_train, y_test = train_test_split(embeddings, labels, test_size=0.2, random_state=42)
 
     knn = KNeighborsClassifier(n_neighbors=n_neighbors, weights="uniform")
     knn.fit(X_train, y_train)
-
-    with open(MODEL_PATH, "wb") as file:
-        pickle.dump(knn, file)
 
     accuracy = knn.score(X_test, y_test)
     return knn, accuracy
@@ -99,31 +93,21 @@ def get_face_embeddings(image):
 
 # Streamlit UI
 st.title("Real-Time Face Recognition with KNN")
-st.write("Upload your dataset, train a KNN model, and perform real-time face recognition.")
+st.write("This app loads a dataset, trains a KNN model, and performs real-time face recognition.")
 
-# Sidebar for dataset upload and model training
-with st.sidebar:
-    dataset_uploaded = st.file_uploader("Upload Dataset (.npz)", type=["npz"])
+# Load dataset from .npz
+if os.path.exists(DATASET_FILE):
+    embeddings, labels = load_dataset(DATASET_FILE, resize_to=RESIZE_TO)
+    st.write(f"Loaded {len(embeddings)} embeddings from the dataset.")
 
-    if dataset_uploaded:
-        with open(DATASET_FILE, "wb") as f:
-            f.write(dataset_uploaded.read())
+    # Train the model
+    st.write("Training the KNN model...")
+    knn_model, accuracy = train_knn(embeddings, labels)
+    st.success(f"Model trained with {accuracy * 100:.2f}% accuracy.")
 
-        embeddings, labels = load_dataset(DATASET_FILE, resize_to=RESIZE_TO)
-
-        st.write(f"Loaded {len(embeddings)} embeddings from the dataset.")
-
-        train_model = st.button("Train Model")
-        if train_model:
-            knn, accuracy = train_and_save_knn(embeddings, labels)
-            st.success(f"Model trained with {accuracy * 100:.2f}% accuracy.")
-    else:
-        st.warning("Please upload a dataset to proceed.")
-
-# Main section for real-time recognition
-if os.path.exists(MODEL_PATH):
-    knn_model = pickle.load(open(MODEL_PATH, "rb"))
-    st.write("Real-Time Recognition")
-    st.button("Start Webcam", on_click=real_time_recognition, args=(knn_model,))
+    # Start real-time recognition
+    if st.button("Start Webcam"):
+        st.write("Starting webcam for real-time recognition. Press 'Q' to stop.")
+        real_time_recognition(knn_model)
 else:
-    st.warning("Please train the model first.")
+    st.error(f"Dataset file not found: {DATASET_FILE}. Please ensure it's in the repository.")
